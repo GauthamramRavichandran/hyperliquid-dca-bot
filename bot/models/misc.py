@@ -8,6 +8,7 @@ class Pair:
     market_type: Literal["spot", "perp"]  # Market type
     base_token: str            # e.g. "ETH"
     quote_token: str           # e.g. "USDC"
+    sz_decimals: int           # e.g. 6
 
     def __repr__(self):
         return f"Pair(symbol={self.symbol}, price={self.price}, market_type={self.market_type}, base_token={self.base_token}, quote_token={self.quote_token})"

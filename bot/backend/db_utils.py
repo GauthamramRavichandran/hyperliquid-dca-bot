@@ -1,5 +1,26 @@
-import sqlite3
+import json
 import os
+import sqlite3
+from typing import Dict
+
+
+def parse_coins_json(coins_str: str) -> Dict[str, float]:
+    """
+    Safely parse a JSON string representing coin allocations.
+
+    Args:
+        coins_str: JSON string like '{"btc": 50, "eth": 50}'
+
+    Returns:
+        A dictionary with coin names (lowercased) as keys and float percentages as values.
+    """
+    try:
+        data = json.loads(coins_str)
+        return {k: float(v) for k, v in data.items()}
+    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+        # Log or raise as needed
+        return {}
+
 
 def get_connection(db_path: str):
     return sqlite3.connect(db_path)

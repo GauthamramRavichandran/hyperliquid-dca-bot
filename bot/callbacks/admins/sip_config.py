@@ -25,18 +25,56 @@ from bot.models import HyperliquidManager, Pair
 
 logger = logging.getLogger(__name__)
 interval_pattern = re.compile(r"^(\d+)([dhm])$")
+from datetime import timedelta
+import re
+
+
 
 class SipConfig:
     
     @staticmethod
-    def calculate_token_amounts(coins: dict[str, float], pairs: list[Pair], sip_amount: float) -> dict[str, float]:
+    def parse_interval_to_timedelta(interval: str) -> timedelta:
+        """
+        Converts an interval string like '1h', '3d', '30m' to a timedelta object.
+
+        Supported suffixes:
+            - m: minutes
+            - h: hours
+            - d: days
+
+        Args:
+            interval: A string representing the interval.
+
+        Returns:
+            A timedelta object representing the interval.
+
+        Raises:
+            ValueError: If the interval format is invalid.
+        """
+        
+        match = interval_pattern.match(interval.lower())
+        if match is None:
+            raise ValueError("Invalid format")
+        num, unit = int(match.group(1)), match.group(2)
+        if unit == "d":
+            delta = timedelta(days=num)
+        elif unit == "h":
+            delta = timedelta(hours=num)
+        elif unit == "m":
+            delta = timedelta(minutes=num)
+        else:
+            raise ValueError("Invalid unit. Should be one of 'd', 'h', 'm'")
+        return delta
+    
+    @staticmethod
+    def calculate_token_amounts(coins: dict[str, float], pairs: list[Pair], sip_amount: float) -> dict[str, dict]:
         """
         Calculate the token amounts for each coin in the SIP strategy.
 
         :param coins: dict of token -> percentage (0-100)
         :param pairs: list of spot pairs
         :param sip_amount: total USD amount of the SIP
-        :return: dict of token -> amount (rounded to 8 decimals)
+        :return: dict of token -> amount (rounded to 4 decimals)
 
         Raises ValueError if a price is not found for any of the tokens.
         """
@@ -44,14 +82,16 @@ class SipConfig:
 
         # Build a lookup for base_token -> price
         price_lookup = {pair.base_token: pair.price for pair in pairs}
+        sz_decimals_lookup = {pair.base_token: pair.sz_decimals for pair in pairs}
 
         for token, percent in coins.items():
             token_usd = sip_amount * (percent / 100)
             price = price_lookup.get(token)
+            sz_decimals = sz_decimals_lookup.get(token)
 
             if price:
                 qty = token_usd / price
-                result[token] = {"qty":round(qty, 8), "token_usd": token_usd}
+                result[token] = {"qty":round(qty, sz_decimals), "token_usd": token_usd, "price": price}
             else:
                 raise ValueError(f"Price not found for token: {token}")
 
@@ -171,19 +211,9 @@ class SipConfig:
     @staticmethod
     async def received_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
-            interval = update.message.text.strip().lower()
-            match = interval_pattern.match(interval)
-            if match is None:
-                raise ValueError("Invalid format")
-            num, unit = int(match.group(1)), match.group(2)
-            if unit == "d":
-                delta = timedelta(days=num)
-            elif unit == "h":
-                delta = timedelta(hours=num)
-            elif unit == "m":
-                delta = timedelta(minutes=num)
-            else:
-                raise ValueError("Invalid unit. Should be one of 'd', 'h', 'm'")
+            interval = update.message.text.strip()
+            delta: Optional[timedelta] = SipConfig.parse_interval_to_timedelta(interval)
+            
             now = datetime.utcnow()
             start_of_day = datetime(year=now.year, month=now.month, day=now.day, hour=0, minute=0, second=0)
             next_runs = []
