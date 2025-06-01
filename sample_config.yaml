@@ -1,0 +1,8 @@
+telegram:
+  bot_token: "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ"
+  user_id: 123456789
+
+hyperliquid:
+  private_key: "api_wallet_private_key" # private key of the API wallet address
+  wallet_address: "your_wallet_address"  # actual wallet address, not API wallet address
+  testnet: True

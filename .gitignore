@@ -1,0 +1,9 @@
+env/
+.venv/
+.idea/
+__pycache__/
+testing.py
+*.pyc
+*.log
+*.db
+config.yaml
