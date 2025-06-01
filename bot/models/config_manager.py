@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import sys
 import yaml
@@ -16,6 +17,7 @@ from hyperliquid.utils import constants, error
 from telegram import Bot, Chat
 from telegram.error import TelegramError
 
+from ..backend.db_utils import init_db
 from ..backend.internal_config import InternalConfig
 from ..models.hyperliquid_manager import HyperliquidManager
 
@@ -38,6 +40,8 @@ class ConfigManager:
         self.config_path: Path = config_path
         self.config: Dict[str, Any] = {}
         self.config_hash: str = ""
+        self.exchange: Optional[Exchange] = None
+        self.is_mainnet: bool = False
         
     def load_config_file(self) -> None:
         """
@@ -48,8 +52,33 @@ class ConfigManager:
         if not self.config_path.exists():
             raise ConfigError(f"Config file '{self.config_path}' not found. Please create it before running the bot.")
         with open(self.config_path, "r") as f:
+            print("Read config file")
             self.config = yaml.safe_load(f) or {}
+    
+    def get_db_path(self) -> str:
+        """
+        Determine the database path based on the current configuration.
+
+        This method creates a 'data' directory if it does not exist and returns the path to the
+        database file. The path is determined by whether the application is configured to use
+        the testnet or mainnet.
+
+        Returns:
+            str: The file path to the database, either 'data/testnet.db' or 'data/mainnet.db'.
+        """
+
+        db_folder = "data"
+        os.makedirs(db_folder, exist_ok=True)
+        
+        if self.config["hyperliquid"]["testnet"]:
+            db_path = os.path.join(db_folder, "testnet.db")
+        else:
+            db_path = os.path.join(db_folder, "mainnet.db")
+            self.is_mainnet = True
             
+        init_db(db_path)
+        return db_path
+    
     async def load_config(self) -> bool:
         """
         Load the configuration from the config YAML file.
@@ -65,9 +94,9 @@ class ConfigManager:
 
         # Compute the SHA-256 hash of the configuration
         self.config_hash: str = hashlib.sha256(json.dumps(self.config).encode()).hexdigest()
-
+        db_path = self.get_db_path()
         # Check if the configuration has been changed since the last successful run
-        last_success_hash = await InternalConfig().get("config_hash")
+        last_success_hash = await InternalConfig(db_path).get("config_hash")
         if last_success_hash == self.config_hash:
             return False
         return True
@@ -109,32 +138,47 @@ class ConfigManager:
         if errors:
             raise ConfigError("Config validation errors:\n" + "\n".join(errors))
 
+    def _load_exchange(self) -> None:
+        """
+        Loads the Hyperliquid exchange instance using the config values.
+
+        It creates an Ethereum account using the private key, and then
+        creates an instance of the Hyperliquid Exchange class using the
+        account, base URL (testnet or mainnet), and the wallet address.
+
+        It logs the chosen base URL to the logger.
+
+        If the private key is invalid, it raises a ConfigError.
+        """
+        private_key: str = self.config["hyperliquid"]["private_key"]
+        address: str = self.config["hyperliquid"]["wallet_address"]
+        testnet: bool = self.config["hyperliquid"]["testnet"]
+        skip_ws = True
+        
+        if testnet:
+            base_url: str = constants.TESTNET_API_URL
+            logger.info(f"hl: Using testnet - {base_url}")
+        else:
+            base_url: str = constants.MAINNET_API_URL
+            logger.info(f"hl: Using mainnet - {base_url}")
+        
+        # load ethereum account from private key
+        try:
+            account = Account.from_key(private_key)
+        except (ValidationError, ValueError):
+            raise ConfigError("Invalid private key provided.")
+            
+        if not is_checksum_address(account.address):
+            raise ConfigError("Invalid private key provided.")
+        
+        self.exchange: Exchange = Exchange(wallet=account, base_url=base_url, 
+                                           account_address=address)
+        
     async def _validate_hyperliquid(self, config: dict) -> None:
         try:
-            private_key: str = config["private_key"]
-            address: str = config["wallet_address"]
-            testnet: bool = config["testnet"]
-            skip_ws = True
-            
-            if testnet:
-                base_url: str = constants.TESTNET_API_URL
-                logger.info(f"hl: Using testnet - {base_url}")
-            else:
-                base_url: str = constants.MAINNET_API_URL
-                logger.info(f"hl: Using mainnet - {base_url}")
-                
-            # load ethereum account from private key
-            try:
-                account = Account.from_key(private_key)
-            except (ValidationError, ValueError):
-                raise ConfigError("Invalid private key provided.")
-                
-            if not is_checksum_address(account.address):
-                raise ConfigError("Invalid private key provided.")
-            exchange: Exchange = Exchange(wallet=account, base_url=base_url, 
-                                          account_address=address)
-            
-            info: Info = exchange.info
+            address: str = self.config["hyperliquid"]["wallet_address"]
+            self._load_exchange()
+            info: Info = self.exchange.info
             try:
                 user_state = info.user_state(address)
                 # Get the user state and print out position information
@@ -158,11 +202,11 @@ class ConfigManager:
             # The order is placed as a "limit" order with the time-in-force set to "Good till Cancelled" (GTC).
             # This allows us to test placing an order without immediately executing it.
             SPOT_ETH_PAIR = "UETH/USDC"
-            eth_price = int(HyperliquidManager(exchange).get_spot_price(SPOT_ETH_PAIR))
+            eth_price = int(HyperliquidManager(self.exchange).get_spot_price(SPOT_ETH_PAIR))
             # to do a test order, we buy eth at 50% of the current price
             test_buy_price = int(eth_price * 0.5)
             print(f"test keys -- placing an Ioc order of {0.05} ETH at {test_buy_price}")
-            order_result = exchange.order(SPOT_ETH_PAIR, True, 0.05, test_buy_price, {"limit": {"tif": "Ioc"}})
+            order_result = self.exchange.order(SPOT_ETH_PAIR, True, 0.05, test_buy_price, {"limit": {"tif": "Ioc"}})
             print(order_result)
 
             # If the order was placed successfully and the status is "resting," we attempt to cancel it.
@@ -172,7 +216,7 @@ class ConfigManager:
             if order_result["status"] == "ok":
                 status = order_result["response"]["data"]["statuses"][0]
                 if "resting" in status:
-                    cancel_result = exchange.cancel(SPOT_ETH_PAIR, status["resting"]["oid"])
+                    cancel_result = self.exchange.cancel(SPOT_ETH_PAIR, status["resting"]["oid"])
                     print(cancel_result)
                 else:
                     # this failure is expected as we try to execute buy order at half price
@@ -184,7 +228,8 @@ class ConfigManager:
                 raise ConfigError(f"Test order failed: {order_result}")
             
             if self.config_hash != "":
-                await InternalConfig().set("config_hash", self.config_hash)
+                db_path = self.get_db_path()
+                await InternalConfig(db_path).set("config_hash", self.config_hash)
             else:
                 logger.warning("No config hash found in config.")
                 
@@ -228,6 +273,9 @@ class ConfigManager:
         if config_changed:
             self.initial_validation()
             await self._external_validation()
+        else:
+            # load exchange
+            self._load_exchange()
 
     def get_config(self) -> Dict[str, Any]:
         return self.config

@@ -6,14 +6,15 @@ class HyperliquidManager:
     def __init__(self, exchange: Exchange):
         self.exchange = exchange
     
-
-    def get_spot_price(self, token_name: str) -> float:
+    def get_spot_price(self, token_name: str) -> Optional[float]:
         """
         Fetches the current spot price (markPx) for a given token name (e.g., "UETH" or "UETH/USDC") on Hyperliquid.
 
         :param token_name: Name of the token, like "UETH"
         :return: Spot price as float
         """
+        if token_name is None:
+            return None
         meta, asset_ctxs = self.exchange.info.spot_meta_and_asset_ctxs()
         if "/"  in token_name:
             token_name: str = token_name.split("/")[0]
@@ -43,3 +44,4 @@ class HyperliquidManager:
                 return float(ctx["markPx"])
 
         raise ValueError(f"Price for coin '{coin_name}' not found.")
+

@@ -1,11 +1,14 @@
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from telegram.ext import Application, ApplicationBuilder, ContextTypes
 from telegram import Update
 
-from bot.handlers import Users
+from bot.backend import InternalConfigDB, SIPConfigDB
+from bot.backend.db_utils import init_db
+from bot.handlers import Users, Admins
 from bot.models.config_manager import ConfigManager
 
 logging.basicConfig(
@@ -15,16 +18,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def load_config(application: Application):
+
+async def load_config(app: Application):
     try:
         config_manager = ConfigManager(Path("config.yaml"))
         await config_manager.validate()
         config = config_manager.config
-        application.bot_data["config"] = config
+        app.bot_data["config"] = config
         logger.info("✅ Config validated successfully.")
+        
+        db_path = config_manager.get_db_path()
+        init_db(db_path)
+        logger.info("✅ DB initialized successfully.")
+        
+        app.bot_data["sip_db"] = SIPConfigDB(db_path)
+        app.bot_data["internal_db"] = InternalConfigDB(db_path)
+        
+        # store instantiated hyperliquid exchange
+        app.bot_data["exchange"] = config_manager.exchange
+        app.bot_data["is_mainnet"] = config_manager.is_mainnet
     except Exception as e:
         logger.exception(f"❌ Config validation failed: {e}")
-        return
+        raise
+
 
 def main():
     # Load the config for getting the bot token of Telegram
@@ -38,7 +54,7 @@ def main():
         .post_init(load_config)
         .build()
     )
-    handlers = Users()()
+    handlers = Users()() + Admins()()
     for handler in handlers:
         application.add_handler(handler)
     logger.info("Starting the bot...")

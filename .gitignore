@@ -7,3 +7,5 @@ testing.py
 *.log
 *.db
 config.yaml
+testnet_config.yaml
+mainnet_config.yaml
