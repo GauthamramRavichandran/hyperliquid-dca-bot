@@ -55,10 +55,12 @@ def init_db(db_path: str):
             config_id INTEGER NOT NULL,
             executed_at TEXT NOT NULL,
             coin TEXT NOT NULL,
-            amount_usd REAL NOT NULL,
-            size_received REAL NOT NULL,
-            coin_price_usd REAL NOT NULL,
-            fee_usd REAL NOT NULL,
+            amount_usd REAL,
+            size_received REAL,
+            coin_price_usd REAL,
+            fee_usd REAL,
+            order_id TEXT,
+            status integer,
             FOREIGN KEY(config_id) REFERENCES sip_config(id)
         );
         """)

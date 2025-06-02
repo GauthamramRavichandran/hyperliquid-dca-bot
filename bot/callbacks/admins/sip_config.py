@@ -18,7 +18,7 @@ from telegram.ext import (
 from bot.backend import SIPConfigDB
 from bot.backend.exceptions import DuplicateLabelError, InsufficientAmountError
 from bot.const import (
-    STATES, SpotPairMapping, TestnetPairs, confirmation_keyboard
+    STATES, confirmation_keyboard, coin_mapping, testnet_pairs
 )
 from bot.models import HyperliquidManager, Pair
 
@@ -148,13 +148,9 @@ class SipConfig:
             pair_list: list[Pair] = []
             for coin in coins.keys():
                 if testnet_pairs_check:
-                    if coin not in TestnetPairs:
-                        raise ValueError(f"Invalid coin: {coin}\nAvailable testnet coins: {list(TestnetPairs.keys())}")
-                    pair: str = TestnetPairs[coin]
-                else:
-                    # if coin not in SpotPairMapping:
-                    #     raise ValueError(f"Invalid coin: {coin}")
-                    pair: str = SpotPairMapping.get(coin, coin)
+                    if coin not in testnet_pairs:
+                        raise ValueError(f"Invalid coin: {coin}\nAvailable testnet coins: {list(testnet_pairs.keys())}")
+                pair: str = coin_mapping.get(coin, coin) + "/USDC"
                 price: Optional[float] = hlm.get_spot_price(pair)
                 pair_list.append(Pair(symbol=pair, price=price, market_type="spot", base_token=coin, quote_token="USDC"))
             context.user_data["pairs"] = pair_list
